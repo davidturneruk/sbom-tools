@@ -70,5 +70,31 @@ class YamlImages(unittest.TestCase):
         self.assertEqual(list(li.yaml_images(text)), [("a:1", 1), ("b:2", 4)])
 
 
+class ValuesContent(unittest.TestCase):
+    """K3s deploys some charts itself; a HelmChartConfig overrides their values,
+    image included, inside a string."""
+
+    def doc(self, values):
+        return ("apiVersion: helm.cattle.io/v1\nkind: HelmChartConfig\nmetadata:\n  name: app\n"
+                "spec:\n  valuesContent: |-\n" + "".join(f"    {l}\n" for l in values))
+
+    def test_registry_repository_and_tag(self):
+        text = self.doc(["resources: {}", "image:", "  registry: registry.example", "  repository: app",
+                         "  tag: \"1.2.3\""])
+        self.assertEqual(list(li.yaml_images(text)), [("registry.example/app:1.2.3", 8)])
+
+    def test_registry_in_repository_and_digest_in_tag(self):
+        # Some bundled charts ignore image.registry, so the registry goes in repository.
+        text = self.doc(["image:", "  repository: registry.example/app", f"  tag: \"1.2.3@{D}\""])
+        [(ref, _)] = li.yaml_images(text)
+        self.assertEqual(ref, f"registry.example/app:1.2.3@{D}")
+        self.assertEqual(li.parse_ref(ref)["digest"], D)
+
+    def test_no_image_or_no_repository(self):
+        self.assertEqual(list(li.yaml_images(self.doc(["resources: {}"]))), [])
+        self.assertEqual(list(li.yaml_images(self.doc(["image:", "  tag: \"1.0\""]))), [])
+        self.assertEqual(list(li.yaml_images(self.doc(["not: [valid"]))), [])
+
+
 if __name__ == "__main__":
     unittest.main()

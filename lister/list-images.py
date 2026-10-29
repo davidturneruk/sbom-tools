@@ -13,7 +13,8 @@ of any particular estate. See README.md for the config format.
 Sources:
   compose        image: in docker-compose.yml files
   scripts        image words such as alpine:3.24@sha256:... in tracked *.sh files
-  yaml           image: in other YAML files (an MCP catalog, Kubernetes manifests)
+  yaml           image: in other YAML files (an MCP catalog, Kubernetes manifests), and
+                 the image a K3s HelmChart or HelmChartConfig sets in its valuesContent
   helm           images in each Flux HelmRelease, rendered with `helm template`, so
                  chart defaults are listed too (needs network and helm)
   k3s            the k3s-images.txt that the pinned K3s release publishes (needs network)
@@ -88,9 +89,34 @@ def host_for(path, cfg):
     return cfg["default_host"]
 
 
+def values_image(text, first_line):
+    """The image a K3s HelmChart or HelmChartConfig's valuesContent sets, spelt the way
+    most charts take it: image.repository, with optional image.registry and image.tag (a
+    tag may carry @sha256:...). Yields (ref, line) at most once; first_line is the line
+    the content starts on."""
+    try:
+        node = yaml.compose(text)
+    except yaml.YAMLError:
+        return
+    if not isinstance(node, yaml.MappingNode):
+        return
+    for k, v in node.value:
+        if isinstance(k, yaml.ScalarNode) and k.value == "image" and isinstance(v, yaml.MappingNode):
+            parts = {kk.value: vv.value for kk, vv in v.value
+                     if isinstance(kk, yaml.ScalarNode) and isinstance(vv, yaml.ScalarNode)}
+            if not parts.get("repository"):
+                return
+            ref = f"{parts['registry']}/{parts['repository']}" if parts.get("registry") else parts["repository"]
+            if parts.get("tag"):
+                ref += f":{parts['tag']}"
+            yield ref, first_line + k.start_mark.line
+            return
+
+
 def yaml_images(text):
-    """Yield (value, line) for every scalar `image:` mapping value, and every image passed
-    in an args list as --something-image=REF. Line numbers are 1-based."""
+    """Yield (value, line) for every scalar `image:` mapping value, every image passed
+    in an args list as --something-image=REF, and the image a valuesContent string sets
+    (values_image). Line numbers are 1-based."""
     try:
         docs = list(yaml.compose_all(text))
     except yaml.YAMLError as e:
@@ -101,6 +127,9 @@ def yaml_images(text):
             for k, v in node.value:
                 if isinstance(k, yaml.ScalarNode) and k.value == "image" and isinstance(v, yaml.ScalarNode):
                     yield v.value, v.start_mark.line + 1
+                elif isinstance(k, yaml.ScalarNode) and k.value == "valuesContent" and isinstance(v, yaml.ScalarNode):
+                    # A block scalar's content starts the line after its indicator.
+                    yield from values_image(v.value, v.start_mark.line + 2)
                 elif isinstance(k, yaml.ScalarNode) and k.value in ("args", "command") and isinstance(v, yaml.SequenceNode):
                     for item in v.value:
                         if isinstance(item, yaml.ScalarNode):

@@ -78,6 +78,9 @@ What each source finds:
   defaults are included. Hooks are rendered too. `valuesFrom` and OCI chart
   repositories aren't supported, and say so instead of being skipped. A `k3s`
   source must come before it, because the K3s version sets `--kube-version`.
+- **`yaml`** also lists the image a K3s `HelmChart` or `HelmChartConfig` sets in its
+  `valuesContent` string (`image.repository`, optional `image.registry` and
+  `image.tag`), which is how a bundled chart such as Traefik gets another image.
 - **`k3s`** lists every image the K3s release publishes in `k3s-images.txt`,
   including ones a cluster may have disabled. Treat these as allowed, not as
   required.
