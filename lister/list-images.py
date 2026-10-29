@@ -29,6 +29,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -213,8 +214,15 @@ def list_helm(repo, files, cfg, src, helm_cmd, kube_version):
             "template", name, chart["chart"], "--repo", url, "--version", str(chart["version"]),
             "--namespace", ns, "--kube-version", kube_version, "-f", "-",
         ]
-        res = subprocess.run(cmd, input=yaml.safe_dump(spec.get("values") or {}).encode(),
-                             capture_output=True)
+        values = yaml.safe_dump(spec.get("values") or {}).encode()
+        # One retry: chart repositories are static sites, and a 502 from one of them
+        # would otherwise fail every check that lists this repo.
+        for attempt in range(2):
+            res = subprocess.run(cmd, input=values, capture_output=True)
+            if res.returncode == 0:
+                break
+            if attempt == 0:
+                time.sleep(5)
         if res.returncode != 0:
             die(f"{f}: helm template {name} failed: {res.stderr.decode().strip()}")
         seen = set()
