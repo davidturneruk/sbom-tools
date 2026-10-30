@@ -143,7 +143,9 @@ def packages(path):
 
 
 def vulns(path, grype):
-    """{(vuln id, package name): match} from Grype, reading the SBOM's own file."""
+    """{(vuln id, package name): match} from Grype, reading the SBOM's own file. A distro
+    package's match also names its source package (`upstream`, with `upstream_version`
+    when that differs from the binary's), which is what distro advisories are keyed by."""
     with open(path, "rb") as fh:
         data = run(shlex.split(grype) + ["-o", "json"], input=fh.read(),
                    env={"GRYPE_CHECK_FOR_APP_UPDATE": "false"})
@@ -151,11 +153,13 @@ def vulns(path, grype):
     for m in json.loads(data).get("matches", []):
         v, a = m["vulnerability"], m["artifact"]
         fix = v.get("fix", {})
+        up = (a.get("upstreams") or [{}])[0]
         key = (v["id"], a["name"])
         out[key] = {
             "id": v["id"], "package": a["name"], "version": a["version"],
             "severity": v.get("severity", "Unknown"),
             "fixed_in": ", ".join(fix.get("versions") or []) if fix.get("state") == "fixed" else "",
+            "upstream": up.get("name", ""), "upstream_version": up.get("version", ""),
         }
     return out
 

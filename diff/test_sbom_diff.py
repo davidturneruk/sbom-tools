@@ -59,6 +59,33 @@ class Packages(unittest.TestCase):
         self.assertEqual(changed, [(("apk", "a"), {"1"}, {"2"})])
 
 
+class Vulns(unittest.TestCase):
+    MATCHES = {"matches": [
+        {"vulnerability": {"id": "CVE-2026-5450", "severity": "High",
+                           "fix": {"state": "fixed", "versions": ["2.41-12+deb13u4"]}},
+         "artifact": {"name": "libc6", "version": "2.41-12+deb13u3", "upstreams": [{"name": "glibc"}]}},
+        {"vulnerability": {"id": "CVE-2026-1", "severity": "Low", "fix": {"state": "not-fixed"}},
+         "artifact": {"name": "grub-efi-amd64-signed", "version": "1.215+2.14-2ubuntu1",
+                      "upstreams": [{"name": "grub2-signed", "version": "1.215"}]}},
+        {"vulnerability": {"id": "GHSA-x", "severity": "Medium", "fix": {}},
+         "artifact": {"name": "requests", "version": "2.0.0"}},
+    ]}
+
+    def test_source_package_is_kept(self):
+        run = sd.run
+        sd.run = lambda *a, **k: json.dumps(self.MATCHES).encode()
+        try:
+            with tempfile.NamedTemporaryFile() as fh:
+                got = sd.vulns(fh.name, "grype")
+        finally:
+            sd.run = run
+        self.assertEqual(got[("CVE-2026-5450", "libc6")]["upstream"], "glibc")
+        self.assertEqual(got[("CVE-2026-5450", "libc6")]["upstream_version"], "")
+        self.assertEqual(got[("CVE-2026-5450", "libc6")]["fixed_in"], "2.41-12+deb13u4")
+        self.assertEqual(got[("CVE-2026-1", "grub-efi-amd64-signed")]["upstream_version"], "1.215")
+        self.assertEqual(got[("GHSA-x", "requests")]["upstream"], "")
+
+
 class PullRef(unittest.TestCase):
     def test_docker_hub_tries_the_mirror_first(self):
         got = sd.pull_ref(e("docker.io/library/alpine", "a"), "mirror.gcr.io")
