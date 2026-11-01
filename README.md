@@ -123,8 +123,8 @@ Settings:
 | `--syft` | `SYFT` | `syft` | Command for Syft |
 | `--grype` | `GRYPE` | `grype` | Command for Grype |
 | `--mirror` | `DOCKERHUB_MIRROR` | none | A Docker Hub mirror to try first, such as `mirror.gcr.io`. Shared CI egress IPs hit Docker Hub's per-IP anonymous limit. The digest is the same either way, and a miss falls back to Docker Hub. |
-| `--skip-registries` | `SBOM_SKIP_REGISTRIES` | none | Comma-separated registry hosts not to scan, for registries that need a login the CI environment doesn't have. Their images are listed as not scanned and don't fail the check, so a change to one isn't reported as a tool error every time. |
-| `--only-registries` | `SBOM_ONLY_REGISTRIES` | none | The other half of `--skip-registries`: scan images from these registry hosts and no others. Run it in a job that has the registry's login, while the main job skips the same hosts, so each image is scanned once. |
+| `--skip-registries` | `SBOM_SKIP_REGISTRIES` | none | Comma-separated registry hosts (`dhi.io`) or repository prefixes (`ghcr.io/someone`, for one account's private images on a public registry) not to scan, for registries that need a login the CI environment doesn't have. Their images are listed as not scanned and don't fail the check, so a change to one isn't reported as a tool error every time. |
+| `--only-registries` | `SBOM_ONLY_REGISTRIES` | none | The other half of `--skip-registries`: scan images from these registry hosts or repository prefixes and no others. Run it in a job that has the registry's login, while the main job skips the same hosts, so each image is scanned once. |
 | `--workdir` | `SBOM_WORKDIR` | `/var/tmp` | Scratch space. Keep it on disk: large images don't fit a RAM-backed `/tmp`. |
 | `--offline-lister` | | off | List without helm and k3s |
 
