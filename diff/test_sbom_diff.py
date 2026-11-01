@@ -125,6 +125,19 @@ class SkipRegistries(unittest.TestCase):
         code, out, scanned = self.run_main([e("quay.io/x", "a")], [e("quay.io/x", "b")], "dhi.io")
         self.assertEqual((code, scanned), (3, ["quay.io/x"]))
 
+    def test_a_repository_prefix_skips_one_account_only(self):
+        base = [e("ghcr.io/me/app", "a", "a.yml:1"), e("ghcr.io/them/app", "a", "b.yml:1")]
+        head = [e("ghcr.io/me/app", "b", "a.yml:1"), e("ghcr.io/them/app", "b", "b.yml:1")]
+        code, out, scanned = self.run_main(base, head, "dhi.io,ghcr.io/me")
+        self.assertEqual((code, scanned), (3, ["ghcr.io/them/app"]))
+        code, out, scanned = self.run_main(base[:1], head[:1], "ghcr.io/me")
+        self.assertEqual((code, scanned), (0, []))
+        self.assertIn("`ghcr.io/me/app (h)`: not scanned", out)
+
+    def test_a_prefix_is_a_path_boundary(self):
+        self.assertFalse(sd.listed("ghcr.io/meadow/app", ["ghcr.io/me"]))
+        self.assertTrue(sd.listed("ghcr.io/me/app", ["ghcr.io/me/"]))
+
     def test_only_registries_scans_just_those(self):
         base = [e("dhi.io/alloy", "a", "a.yml:1"), e("quay.io/x", "a", "b.yml:1")]
         head = [e("dhi.io/alloy", "b", "a.yml:1"), e("quay.io/x", "b", "b.yml:1")]

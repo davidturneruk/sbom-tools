@@ -14,7 +14,7 @@ Exit codes:
   3  tool error: Syft, Grype, helm or a registry failed even after a retry. Reported as
      a tool error, so it is never mistaken for a finding, nor for a clean result.
 
-Images from a registry named in --skip-registries are listed as not scanned, and don't
+Images from a registry (or repository prefix) named in --skip-registries are listed as not scanned, and don't
 fail the check. That is for registries that need a login the CI environment doesn't
 have: without it every change to one of their images would be a tool error.
 --only-registries is the other half: a second job that does have the login scans just
@@ -105,6 +105,13 @@ def collect(entries):
 
 def registry(e):
     return e["repository"].split("/", 1)[0]
+
+
+def listed(repository, entries):
+    """True when an entry names the repository's registry host (dhi.io) or a prefix of
+    the repository itself (ghcr.io/someone), so one account's private images on a
+    registry can be skipped without skipping the registry's public ones."""
+    return any(repository == x or repository.startswith(x.rstrip("/") + "/") for x in entries)
 
 
 def pull_ref(e, mirror):
@@ -236,9 +243,9 @@ def main():
     ap.add_argument("--mirror", default=os.environ.get("DOCKERHUB_MIRROR", ""),
                     help="Docker Hub mirror host to try first, e.g. mirror.gcr.io")
     ap.add_argument("--skip-registries", default=os.environ.get("SBOM_SKIP_REGISTRIES", ""),
-                    help="comma-separated registry hosts not to scan, e.g. ones that need a login")
+                    help="comma-separated registry hosts or repository prefixes not to scan, e.g. ones that need a login")
     ap.add_argument("--only-registries", default=os.environ.get("SBOM_ONLY_REGISTRIES", ""),
-                    help="comma-separated registry hosts to scan, and no others")
+                    help="comma-separated registry hosts or repository prefixes to scan, and no others")
     ap.add_argument("--workdir", default=os.environ.get("SBOM_WORKDIR", "/var/tmp"),
                     help="scratch space on disk, not tmpfs (default /var/tmp)")
     args = ap.parse_args()
@@ -271,18 +278,18 @@ def main():
 
         if only:
             # The other job reports everything else, removals included.
-            changes = [c for c in changes if registry(c[2]) in only]
-            removed_images = [k for k in removed_images if k[1].split("/", 1)[0] in only]
+            changes = [c for c in changes if listed(c[2]["repository"], only)]
+            removed_images = [k for k in removed_images if listed(k[1], only)]
         if not changes and not removed_images:
             summary.append("No image changed." if not only else
                            "No image changed on " + ", ".join(f"`{h}`" for h in sorted(only)) + ".")
         for name, old_e, new_e in changes:
-            if registry(new_e) in skip:
-                summary.append(f"### `{name}`: not scanned\n\n`{registry(new_e)}` is in the skip list "
+            if listed(new_e["repository"], skip):
+                summary.append(f"### `{name}`: not scanned\n\nIts registry is in the skip list "
                                "(--skip-registries): it needs a login this check doesn't have.\n")
                 continue
-            if old_e and registry(old_e) in skip:
-                summary.append(f"The image `{name}` replaces is on `{registry(old_e)}`, which isn't scanned: "
+            if old_e and listed(old_e["repository"], skip):
+                summary.append(f"The image `{name}` replaces is on a registry that isn't scanned (`{old_e['repository']}`): "
                                "everything in the new image is listed as added.\n")
                 old_e = None
             new_sbom = sbom(new_e, args.syft, args.mirror, workdir)
