@@ -14,6 +14,10 @@ Exit codes:
   3  tool error: Syft, Grype, helm or a registry failed even after a retry. Reported as
      a tool error, so it is never mistaken for a finding, nor for a clean result.
 
+Images from a registry named in --skip-registries are listed as not scanned, and don't
+fail the check. That is for registries that need a login the CI environment doesn't
+have: without it every change to one of their images would be a tool error.
+
 Output follows Chainguard Checks' conventions (::sandbox-summary::, ::warning file=...),
 which also read sensibly in a plain terminal.
 """
@@ -95,6 +99,10 @@ def collect(entries):
         else:
             d[e["digest"]] = {**e, "sources": [e["source"]]}
     return out
+
+
+def registry(e):
+    return e["repository"].split("/", 1)[0]
 
 
 def pull_ref(e, mirror):
@@ -225,12 +233,15 @@ def main():
     ap.add_argument("--grype", default=os.environ.get("GRYPE", "grype"))
     ap.add_argument("--mirror", default=os.environ.get("DOCKERHUB_MIRROR", ""),
                     help="Docker Hub mirror host to try first, e.g. mirror.gcr.io")
+    ap.add_argument("--skip-registries", default=os.environ.get("SBOM_SKIP_REGISTRIES", ""),
+                    help="comma-separated registry hosts not to scan, e.g. ones that need a login")
     ap.add_argument("--workdir", default=os.environ.get("SBOM_WORKDIR", "/var/tmp"),
                     help="scratch space on disk, not tmpfs (default /var/tmp)")
     args = ap.parse_args()
     if not args.base:
         print("::error::sbom-diff: no base commit (--base or CHAINGUARD_BASE_REVISION)")
         return 3
+    skip = {h.strip() for h in args.skip_registries.split(",") if h.strip()}
 
     workdir = tempfile.mkdtemp(prefix="sbom-diff-", dir=args.workdir)
     # Syft caches every layer under TMPDIR, /tmp by default. In CI /tmp can be RAM
@@ -256,6 +267,14 @@ def main():
         if not changes and not removed_images:
             summary.append("No image changed.")
         for name, old_e, new_e in changes:
+            if registry(new_e) in skip:
+                summary.append(f"### `{name}`: not scanned\n\n`{registry(new_e)}` is in the skip list "
+                               "(--skip-registries): it needs a login this check doesn't have.\n")
+                continue
+            if old_e and registry(old_e) in skip:
+                summary.append(f"The image `{name}` replaces is on `{registry(old_e)}`, which isn't scanned: "
+                               "everything in the new image is listed as added.\n")
+                old_e = None
             new_sbom = sbom(new_e, args.syft, args.mirror, workdir)
             new_pk, new_vu = packages(new_sbom), vulns(new_sbom, args.grype)
             if old_e:

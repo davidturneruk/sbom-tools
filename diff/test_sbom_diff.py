@@ -95,5 +95,36 @@ class PullRef(unittest.TestCase):
         self.assertEqual(len(sd.pull_ref(e("ghcr.io/x/y", "a"), "mirror.gcr.io")), 1)
 
 
+class SkipRegistries(unittest.TestCase):
+    def run_main(self, base, head, skip):
+        import contextlib, io, sys
+        lists = {"base": base, "HEAD": head}
+        scanned = []
+        saved = sd.list_images, sd.sbom, sys.argv
+        sd.list_images = lambda repo, rev, workdir, offline: lists[rev]
+        def fake_sbom(e, *a):
+            scanned.append(e["repository"])
+            raise sd.ToolError("would pull")
+        sd.sbom = fake_sbom
+        sys.argv = ["sbom-diff", "--base", "base", "--skip-registries", skip,
+                    "--workdir", tempfile.gettempdir()]
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                code = sd.main()
+        finally:
+            sd.list_images, sd.sbom, sys.argv = saved
+        return code, out.getvalue(), scanned
+
+    def test_a_skipped_registry_is_reported_not_pulled(self):
+        code, out, scanned = self.run_main([e("dhi.io/alloy", "a")], [e("dhi.io/alloy", "b")], "dhi.io")
+        self.assertEqual((code, scanned), (0, []))
+        self.assertIn("`dhi.io/alloy (h)`: not scanned", out)
+
+    def test_other_registries_are_still_scanned(self):
+        code, out, scanned = self.run_main([e("quay.io/x", "a")], [e("quay.io/x", "b")], "dhi.io")
+        self.assertEqual((code, scanned), (3, ["quay.io/x"]))
+
+
 if __name__ == "__main__":
     unittest.main()
