@@ -96,7 +96,7 @@ class PullRef(unittest.TestCase):
 
 
 class SkipRegistries(unittest.TestCase):
-    def run_main(self, base, head, skip):
+    def run_main(self, base, head, skip, only=""):
         import contextlib, io, sys
         lists = {"base": base, "HEAD": head}
         scanned = []
@@ -106,7 +106,7 @@ class SkipRegistries(unittest.TestCase):
             scanned.append(e["repository"])
             raise sd.ToolError("would pull")
         sd.sbom = fake_sbom
-        sys.argv = ["sbom-diff", "--base", "base", "--skip-registries", skip,
+        sys.argv = ["sbom-diff", "--base", "base", "--skip-registries", skip, "--only-registries", only,
                     "--workdir", tempfile.gettempdir()]
         out = io.StringIO()
         try:
@@ -124,6 +124,17 @@ class SkipRegistries(unittest.TestCase):
     def test_other_registries_are_still_scanned(self):
         code, out, scanned = self.run_main([e("quay.io/x", "a")], [e("quay.io/x", "b")], "dhi.io")
         self.assertEqual((code, scanned), (3, ["quay.io/x"]))
+
+    def test_only_registries_scans_just_those(self):
+        base = [e("dhi.io/alloy", "a", "a.yml:1"), e("quay.io/x", "a", "b.yml:1")]
+        head = [e("dhi.io/alloy", "b", "a.yml:1"), e("quay.io/x", "b", "b.yml:1")]
+        code, out, scanned = self.run_main(base, head, "", only="dhi.io")
+        self.assertEqual((code, scanned), (3, ["dhi.io/alloy"]))
+
+    def test_only_registries_with_nothing_to_do(self):
+        code, out, scanned = self.run_main([e("quay.io/x", "a")], [e("quay.io/x", "b")], "", only="dhi.io")
+        self.assertEqual((code, scanned), (0, []))
+        self.assertIn("No image changed on `dhi.io`.", out)
 
 
 if __name__ == "__main__":
