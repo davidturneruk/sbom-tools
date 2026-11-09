@@ -81,6 +81,12 @@ What each source finds:
 - **`yaml`** also lists the image a K3s `HelmChart` or `HelmChartConfig` sets in its
   `valuesContent` string (`image.repository`, optional `image.registry` and
   `image.tag`), which is how a bundled chart such as Traefik gets another image.
+- **`yaml`** applies a kustomization's `images:` to the files it builds, as
+  kustomize would: an entry whose `name` is the ref's name sets `newName`,
+  `newTag` and `digest` (Flux bootstrap's controllers swapped for another build,
+  say). A kustomization covers each resource it names as a file, and every
+  tracked file under one it names as a directory. Innermost kustomization first.
+  Other kustomize transformers (patches, `namePrefix`) aren't applied.
 - **`k3s`** lists every image the K3s release publishes in `k3s-images.txt`,
   including ones a cluster may have disabled. Treat these as allowed, not as
   required.

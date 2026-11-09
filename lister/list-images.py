@@ -14,7 +14,8 @@ Sources:
   compose        image: in docker-compose.yml files
   scripts        image words such as alpine:3.24@sha256:... in tracked *.sh files
   yaml           image: in other YAML files (an MCP catalog, Kubernetes manifests), and
-                 the image a K3s HelmChart or HelmChartConfig sets in its valuesContent
+                 the image a K3s HelmChart or HelmChartConfig sets in its valuesContent,
+                 rewritten by the `images:` of any kustomization that builds the file
   helm           images in each Flux HelmRelease, rendered with `helm template`, so
                  chart defaults are listed too (needs network and helm)
   k3s            the k3s-images.txt that the pinned K3s release publishes (needs network)
@@ -177,7 +178,63 @@ def list_scripts(repo, files, cfg, src):
                     yield entry(m.group(1), "script", f"{f}:{n}", host_for(f, cfg), cfg["platform"])
 
 
+KUSTOMIZATIONS = ("kustomization.yaml", "kustomization.yml", "Kustomization")
+
+
+def kustomize_images(repo, files):
+    """file -> the `images:` lists of the kustomizations that build it, innermost first.
+
+    A kustomization covers a resource it names as a file, and every tracked file under a
+    resource it names as a directory. That reads a directory more broadly than kustomize
+    does (which follows the directory's own kustomization), but an `images:` entry only
+    touches refs whose name it matches, so the difference is a ref that wasn't built."""
+    tracked, out = set(files), {}
+    found = [f for f in files if os.path.basename(f) in KUSTOMIZATIONS]
+    for kz in sorted(found, key=lambda f: -f.count("/")):
+        try:
+            with open(os.path.join(repo, kz)) as fh:
+                doc = yaml.safe_load(fh)
+        except (OSError, yaml.YAMLError) as e:
+            die(f"{kz}: {e}")
+        if not isinstance(doc, dict) or not doc.get("images"):
+            continue
+        base = os.path.dirname(kz)
+        for res in doc.get("resources") or []:
+            if not isinstance(res, str) or "://" in res:
+                continue  # a remote base: nothing of ours to list
+            path = os.path.normpath(os.path.join(base, res))
+            covered = [path] if path in tracked else [f for f in files if f.startswith(path + "/")]
+            for f in covered:
+                out.setdefault(f, []).append(doc["images"])
+    return out
+
+
+def apply_images(ref, transforms):
+    """A ref as kustomize's images transformer leaves it: an entry whose name is the
+    ref's name sets newName, and newTag and/or digest. newTag alone drops the digest,
+    digest alone drops the tag, both give name:tag@digest. Applied innermost first."""
+    m = REF_RE.match(ref)
+    if not m:
+        return ref
+    name, tag, digest = m.group("name"), m.group("tag"), m.group("digest")
+    for images in transforms:
+        for im in images:
+            if not isinstance(im, dict) or im.get("name") != name:
+                continue
+            name = im.get("newName") or name
+            new_tag, new_digest = im.get("newTag"), im.get("digest")
+            if new_tag is not None and new_digest:
+                tag, digest = str(new_tag), new_digest
+            elif new_tag is not None:
+                tag, digest = str(new_tag), None
+            elif new_digest:
+                tag, digest = None, new_digest
+            break
+    return name + (f":{tag}" if tag else "") + (f"@{digest}" if digest else "")
+
+
 def list_yaml(repo, files, cfg, src):
+    kz = kustomize_images(repo, files)
     for f in files:
         if not f.endswith((".yaml", ".yml")) or not matches(f, src["paths"]) or matches(f, src.get("exclude")):
             continue
@@ -188,7 +245,8 @@ def list_yaml(repo, files, cfg, src):
         except ValueError as e:
             die(f"{f}: {e}")
         for ref, line in found:
-            yield entry(ref, src.get("kind", "yaml"), f"{f}:{line}", host_for(f, cfg), cfg["platform"])
+            yield entry(apply_images(ref, kz.get(f, [])), src.get("kind", "yaml"), f"{f}:{line}",
+                        host_for(f, cfg), cfg["platform"])
 
 
 def k3s_version(repo, src):

@@ -96,5 +96,54 @@ class ValuesContent(unittest.TestCase):
         self.assertEqual(list(li.yaml_images(self.doc(["not: [valid"]))), [])
 
 
+class Kustomize(unittest.TestCase):
+    D2 = "sha256:" + "b" * 64
+
+    def tree(self, files):
+        import tempfile
+        d = tempfile.mkdtemp()
+        for path, text in files.items():
+            os.makedirs(os.path.join(d, os.path.dirname(path)), exist_ok=True)
+            with open(os.path.join(d, path), "w") as fh:
+                fh.write(text)
+        return d, sorted(files)
+
+    def listed(self, files, paths=("system/*",)):
+        repo, tracked = self.tree(files)
+        cfg = {"platform": "linux/arm64", "default_host": "h"}
+        return [(e["ref"], e["source"]) for e in li.list_yaml(repo, tracked, cfg, {"paths": list(paths)})]
+
+    COMPONENTS = "spec:\n  containers:\n  - image: ghcr.io/example/controller:v1.7.1\n  - image: ghcr.io/example/other:v2\n"
+
+    def test_new_name_tag_and_digest(self):
+        got = self.listed({
+            "system/components.yaml": self.COMPONENTS,
+            "system/kustomization.yaml": "resources: [components.yaml]\nimages:\n"
+                f"- name: ghcr.io/example/controller\n  newName: registry.example/hardened-controller\n"
+                f"  newTag: \"1.7.1\"\n  digest: {D}\n"})
+        self.assertIn((f"registry.example/hardened-controller:1.7.1@{D}", "system/components.yaml:3"), got)
+        self.assertIn(("ghcr.io/example/other:v2", "system/components.yaml:4"), got)
+
+    def test_digest_alone_drops_the_tag_and_newtag_alone_the_digest(self):
+        self.assertEqual(li.apply_images("a.example/x:1", [[{"name": "a.example/x", "digest": D}]]), f"a.example/x@{D}")
+        self.assertEqual(li.apply_images(f"a.example/x:1@{D}", [[{"name": "a.example/x", "newTag": 2}]]), "a.example/x:2")
+
+    def test_a_file_the_kustomization_does_not_build_is_untouched(self):
+        got = self.listed({
+            "system/components.yaml": self.COMPONENTS,
+            "system/kustomization.yaml": "resources: [other.yaml]\nimages:\n- name: ghcr.io/example/controller\n  newTag: v9\n",
+            "system/other.yaml": "image: busybox:1\n"})
+        self.assertIn(("ghcr.io/example/controller:v1.7.1", "system/components.yaml:3"), got)
+
+    def test_a_directory_resource_covers_the_files_under_it_and_inner_goes_first(self):
+        got = self.listed({
+            "system/apps/deploy.yaml": "image: ghcr.io/example/controller:v1\n",
+            "system/apps/kustomization.yaml": "resources: [deploy.yaml]\nimages:\n"
+                "- name: ghcr.io/example/controller\n  newName: registry.example/inner\n",
+            "system/kustomization.yaml": "resources: [apps, https://example.com/remote.yaml]\nimages:\n"
+                f"- name: registry.example/inner\n  digest: {self.D2}\n"}, paths=("system/**", "system/*"))
+        self.assertIn((f"registry.example/inner@{self.D2}", "system/apps/deploy.yaml:1"), got)
+
+
 if __name__ == "__main__":
     unittest.main()
